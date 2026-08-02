@@ -1,0 +1,18 @@
+:root { color-scheme: dark; font-family: "Microsoft YaHei UI", system-ui, sans-serif; }
+body { margin: 0; width: 390px; background: #171717; color: #eee; }
+main { padding: 16px; }
+header { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; }
+h1 { font-size: 18px; margin: 0; }
+header p { color: #aaa; font-size: 12px; margin: 3px 0 0; }
+.dot { width: 11px; height: 11px; border-radius: 50%; background: #d9534f; box-shadow: 0 0 9px currentColor; }
+.dot.ok { background: #48c774; }
+label { color: #bbb; font-size: 12px; display: block; margin-bottom: 5px; }
+input { box-sizing: border-box; width: 100%; padding: 9px; margin-bottom: 9px; background: #252525; color: #fff; border: 1px solid #444; border-radius: 6px; }
+button { width: 100%; margin: 5px 0; padding: 10px; color: #eee; background: #333; border: 1px solid #4b4b4b; border-radius: 7px; cursor: pointer; }
+button:hover { background: #414141; }
+.primary { background: #1769aa; border-color: #2583c9; }
+.danger { color: #ff9a8e; }
+section { margin-top: 12px; border-top: 1px solid #333; padding-top: 10px; }
+#count { color: #7ec8ff; float: right; }
+pre { height: 120px; overflow: auto; white-space: pre-wrap; font-size: 11px; color: #bbb; background: #101010; padding: 8px; border-radius: 6px; }
+.hint { font-size: 11px; line-height: 1.5; color: #888; margin-bottom: 0; }

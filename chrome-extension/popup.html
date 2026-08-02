@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <link rel="stylesheet" href="popup.css">
+    <title>抖音关注珍藏</title>
+  </head>
+  <body>
+    <main>
+      <header>
+        <span class="dot" id="dot"></span>
+        <div>
+          <h1>抖音关注珍藏</h1>
+          <p id="service">正在连接本机服务…</p>
+        </div>
+      </header>
+      <label>视频保存目录（留空使用默认目录）</label>
+      <input id="downloadDir" placeholder="例如 D:\抖音备份">
+      <label>抖珍藏原归档文件夹（只需导入一次）</label>
+      <input id="oldArchiveDir" placeholder="例如 D:\抖珍藏">
+      <button id="importOld">导入抖珍藏旧记录，避免重复下载</button>
+      <button id="login">1. 使用当前 Chrome 登录</button>
+      <button id="sync">2. 同步全部关注</button>
+      <button id="download" class="primary">3. 下载全部作品</button>
+      <button id="stop" class="danger">停止当前任务</button>
+      <section>
+        <strong id="status">准备就绪</strong>
+        <span id="count"></span>
+        <pre id="logs"></pre>
+      </section>
+      <p class="hint">Cookie 只发送到 127.0.0.1，不会上传。请仅备份你有权保存的内容。</p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

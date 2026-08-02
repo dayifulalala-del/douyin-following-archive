@@ -1,0 +1,71 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Test/cache artifacts
+.pytest_cache/
+.pytest-tmp/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Build/package artifacts
+build/
+dist/
+.eggs/
+*.egg-info/
+pip-wheel-metadata/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# OS files
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Runtime output
+Downloaded/
+Downloaded-Following/
+Downloaded-Account/
+downloads/
+Transcripts/
+state/
+dy_downloader.db
+*.db
+*.sqlite
+*.sqlite3
+*.mp4
+*.webm
+*.m4a
+*.mp3
+
+# Local config/secrets
+config*.yml
+!config.example.yml
+.cookies.json
+cookies*.json
+config/cookies.json
+.omx/
+
+# Imported personal archive data
+/data/
+/本地库.html
+
+# Local packaging/output folders
+/outputs/
+/sidebar-preview.png
+
+# Editor / IDE local settings
+.claude/
+.idea/
+.vscode/
+.omc/
+.gstack/
