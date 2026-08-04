@@ -1,4 +1,4 @@
-const BASE = "http://127.0.0.1:8765";
+const BASE = "http://127.0.0.1:8766";
 
 async function api(path, body) {
   const response = await fetch(`${BASE}${path}`, {
@@ -20,7 +20,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.action === "syncCookies") {
       const cookies = await chrome.cookies.getAll({ domain: "douyin.com" });
       const values = Object.fromEntries(cookies.map((item) => [item.name, item.value]));
-      return api("/api/cookies", { cookies: values });
+      return api("/api/cookies", { cookies: values, user_agent: navigator.userAgent });
     }
     throw new Error("unknown action");
   })().then(

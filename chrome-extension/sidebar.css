@@ -23,6 +23,7 @@
 #dy-archive-sidebar .dy-status { padding: 11px; background: #252525; color: #bbb; white-space: pre-wrap; max-height: 160px; overflow: auto; }
 #dy-archive-sidebar .dy-limit { margin-bottom: 18px; font-size: 15px; }
 #dy-archive-sidebar .dy-limit strong { color: #6bd1ff; }
+#dy-archive-sidebar .dy-warning { margin-bottom: 14px; padding: 10px 12px; color: #ffd98a; background: #493d27; border: 1px solid #6a5937; line-height: 1.6; }
 #dy-archive-sidebar details { border-top: 1px solid #4a4a4a; }
 #dy-archive-sidebar summary { padding: 11px 5px; cursor: pointer; }
 #dy-archive-sidebar .dy-authors { max-height: 50vh; overflow: auto; background: #292929; }

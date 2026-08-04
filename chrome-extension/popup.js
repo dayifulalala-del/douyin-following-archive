@@ -1,4 +1,4 @@
-const BASE = "http://127.0.0.1:8765";
+const BASE = "http://127.0.0.1:8766";
 const $ = (id) => document.getElementById(id);
 
 async function api(path, body) {

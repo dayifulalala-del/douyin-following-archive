@@ -24,7 +24,7 @@ def test_single_instance_server_disables_address_reuse():
     assert local_bridge.SingleInstanceHTTPServer.allow_reuse_address is False
 
 
-def get_following_response(state_dir, monkeypatch):
+def get_following_response(state_dir, monkeypatch, path="/api/following"):
     monkeypatch.setattr(local_bridge, "STATE_DIR", state_dir)
     server = local_bridge.SingleInstanceHTTPServer(
         ("127.0.0.1", 0), local_bridge.Handler
@@ -35,7 +35,7 @@ def get_following_response(state_dir, monkeypatch):
         connection = HTTPConnection(*server.server_address, timeout=3)
         connection.request(
             "GET",
-            "/api/following",
+            path,
             headers={"X-Douyin-Archive": local_bridge.EXTENSION_HEADER},
         )
         response = connection.getresponse()
@@ -88,6 +88,62 @@ def test_following_endpoint_returns_recent_sync_result(tmp_path, monkeypatch):
     }
 
 
+def test_following_cached_endpoint_returns_stale_snapshot(tmp_path, monkeypatch):
+    authors = [{"sec_uid": "old", "nickname": "旧作者"}]
+    (tmp_path / "following.json").write_text(
+        json.dumps(
+            {
+                "synced_at": "2026-08-01T00:00:00+00:00",
+                "count": 226,
+                "authors": authors,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    status, payload = get_following_response(
+        tmp_path,
+        monkeypatch,
+        "/api/following-cached",
+    )
+
+    assert status == 200
+    assert payload == {
+        "ok": True,
+        "count": 226,
+        "authors": authors,
+        "stale": True,
+    }
+
+
+def test_task_state_error_ignores_late_progress_line(tmp_path, monkeypatch):
+    monkeypatch.setattr(local_bridge, "STATE_DIR", tmp_path)
+    task = local_bridge.TaskState()
+    task.status = "failed"
+    task.logs.extend(
+        [
+            "RuntimeError: 没有同步到关注作者；请稍后重试。",
+            "[同步] 第 1 页，本页 0 人，累计 0 人",
+        ]
+    )
+
+    assert task.snapshot()["error"] == "没有同步到关注作者；请稍后重试。"
+
+
+def test_task_state_translates_empty_200_antibot_error(tmp_path, monkeypatch):
+    monkeypatch.setattr(local_bridge, "STATE_DIR", tmp_path)
+    task = local_bridge.TaskState()
+    task.status = "failed"
+    task.logs.extend(
+        [
+            "RuntimeError: Empty 200 response (likely anti-bot)",
+            "[同步] 第 1 页，本页 0 人，累计 0 人",
+        ]
+    )
+
+    assert task.snapshot()["error"] == "抖音暂时拦截了关注列表刷新，请稍后重试。"
+
+
 def test_save_browser_cookies_writes_local_auto_config(tmp_path, monkeypatch):
     config = tmp_path / "config.yml"
     cookie_file = tmp_path / "config" / "cookies.json"
@@ -97,11 +153,18 @@ def test_save_browser_cookies_writes_local_auto_config(tmp_path, monkeypatch):
     monkeypatch.setattr(local_bridge, "CONFIG", config)
     monkeypatch.setattr(local_bridge, "COOKIE_FILE", cookie_file)
 
-    count = local_bridge.save_browser_cookies({"sessionid": "secret", "ttwid": "token"})
+    count = local_bridge.save_browser_cookies(
+        {"sessionid": "secret", "ttwid": "token"},
+        "Mozilla/5.0 Chrome/150.0.0.0 Safari/537.36",
+    )
 
     assert count == 2
     assert json.loads(cookie_file.read_text(encoding="utf-8"))["sessionid"] == "secret"
-    assert yaml.safe_load(config.read_text(encoding="utf-8"))["cookies"] == "auto"
+    saved_config = yaml.safe_load(config.read_text(encoding="utf-8"))
+    assert saved_config["cookies"] == "auto"
+    assert saved_config["browser_user_agent"] == (
+        "Mozilla/5.0 Chrome/150.0.0.0 Safari/537.36"
+    )
 
 
 def test_extension_marker_is_accepted_without_origin():

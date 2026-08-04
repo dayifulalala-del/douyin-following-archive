@@ -1,15 +1,30 @@
+import json
+
 import yaml
 
-from tools.following_sync import collect_following, normalize_author, write_outputs
+from tools.following_sync import (
+    collect_following,
+    keep_previous_snapshot_available,
+    normalize_author,
+    write_outputs,
+)
 
 
 class FakeAPI:
     def __init__(self):
         self.calls = []
 
-    async def get_following_page(self, sec_uid, *, max_time=0, count=20):
-        self.calls.append((sec_uid, max_time, count))
-        if max_time == 0:
+    async def get_following_page(
+        self,
+        sec_uid,
+        *,
+        user_id=None,
+        max_time=0,
+        offset=0,
+        count=20,
+    ):
+        self.calls.append((sec_uid, user_id, max_time, offset, count))
+        if max_time == 0 and offset == 0:
             return {
                 "items": [
                     {"sec_uid": "a", "nickname": "甲"},
@@ -17,6 +32,7 @@ class FakeAPI:
                 ],
                 "has_more": 1,
                 "min_time": 123,
+                "offset": 20,
             }
         return {
             "items": [
@@ -51,10 +67,35 @@ def test_normalize_author_keeps_avatar_url():
 
 async def test_collect_following_paginates_and_deduplicates():
     api = FakeAPI()
-    authors = await collect_following(api, "self-sec", delay_seconds=0)
+    authors = await collect_following(
+        api,
+        "self-sec",
+        user_id="self-uid",
+        delay_seconds=0,
+    )
     assert [author["sec_uid"] for author in authors] == ["a", "b", "c"]
     assert authors[1]["nickname"] == "乙-新"
-    assert api.calls == [("self-sec", 0, 20), ("self-sec", 123, 20)]
+    assert api.calls == [
+        ("self-sec", "self-uid", 0, 0, 20),
+        ("self-sec", "self-uid", 123, 20, 20),
+    ]
+
+
+class BrokenPaginationAPI:
+    async def get_following_page(self, *_args, **_kwargs):
+        return {
+            "items": [{"sec_uid": "a", "nickname": "甲"}],
+            "has_more": 1,
+            "min_time": 0,
+            "offset": 0,
+        }
+
+
+async def test_collect_following_rejects_incomplete_page_without_cursor():
+    import pytest
+
+    with pytest.raises(RuntimeError, match="分页中断"):
+        await collect_following(BrokenPaginationAPI(), "self-sec", delay_seconds=0)
 
 
 def test_write_outputs_forces_browser_fallback_to_background(tmp_path):
@@ -81,3 +122,30 @@ def test_write_outputs_forces_browser_fallback_to_background(tmp_path):
     config = yaml.safe_load(generated.read_text(encoding="utf-8"))
     assert config["browser_fallback"]["enabled"] is True
     assert config["browser_fallback"]["headless"] is True
+
+
+def test_failed_refresh_keeps_old_snapshot_available_without_losing_authors(tmp_path):
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    snapshot_file = state_dir / "following.json"
+    old_time = "2026-08-03T00:00:00+00:00"
+    authors = [
+        {"sec_uid": "a", "nickname": "甲"},
+        {"sec_uid": "b", "nickname": "乙"},
+    ]
+    snapshot_file.write_text(
+        json.dumps(
+            {"synced_at": old_time, "count": 2, "authors": authors},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert keep_previous_snapshot_available(state_dir) is True
+
+    payload = json.loads(snapshot_file.read_text(encoding="utf-8"))
+    assert payload["count"] == 2
+    assert payload["authors"] == authors
+    assert payload["data_synced_at"] == old_time
+    assert payload["synced_at"] != old_time
+    assert payload["last_refresh_failed_at"] == payload["synced_at"]

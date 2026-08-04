@@ -10,7 +10,7 @@ from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import yaml
 
@@ -22,7 +22,7 @@ CONFIG = ROOT / "config.yml"
 STATE_DIR = ROOT / "state"
 COOKIE_FILE = ROOT / "config" / "cookies.json"
 HOST = "127.0.0.1"
-PORT = 8765
+PORT = 8766
 EXTENSION_HEADER = "douyin-archive-extension-v1"
 FOLLOWING_CACHE_MAX_AGE_SECONDS = 300
 
@@ -44,6 +44,46 @@ def following_snapshot_is_fresh(
         synced = synced.replace(tzinfo=timezone.utc)
     current = now or datetime.now(timezone.utc)
     return 0 <= (current - synced).total_seconds() <= max_age_seconds
+
+
+def task_error_message(logs: List[str]) -> str:
+    """Return a useful task error instead of a late buffered progress line."""
+    lines = [str(line).strip() for line in logs if str(line).strip()]
+    joined = "\n".join(lines).lower()
+    if "empty 200 response" in joined or "anti-bot" in joined:
+        return "抖音暂时拦截了关注列表刷新，请稍后重试。"
+    for line in reversed(lines):
+        if "RuntimeError:" in line:
+            return line.split("RuntimeError:", 1)[1].strip()
+        if line.startswith("[失败]"):
+            return line[len("[失败]") :].strip() or "任务失败，请稍后重试。"
+    return "任务失败，请稍后重试。"
+
+
+def read_following_snapshot(*, include_stale: bool = False) -> Dict[str, Any]:
+    """Read the last successful snapshot, optionally including an old cache."""
+    snapshot_file = STATE_DIR / "following.json"
+    if not snapshot_file.exists():
+        return {"ok": True, "count": 0, "authors": []}
+    try:
+        payload = json.loads(snapshot_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {"ok": True, "count": 0, "authors": []}
+
+    authors = payload.get("authors") or []
+    if not isinstance(authors, list):
+        authors = []
+    stale = not following_snapshot_is_fresh(payload)
+    if stale and not include_stale:
+        return {"ok": True, "count": 0, "authors": [], "stale": True}
+    result = {
+        "ok": True,
+        "count": int(payload.get("count") or len(authors)),
+        "authors": authors,
+    }
+    if stale:
+        result["stale"] = True
+    return result
 
 
 class TaskState:
@@ -71,6 +111,8 @@ class TaskState:
                 "following_count": count,
                 "logs": list(self.logs),
             }
+            if self.status == "failed":
+                payload["error"] = task_error_message(list(self.logs))
             progress_file = STATE_DIR / "following-progress.json"
             if progress_file.exists():
                 try:
@@ -96,6 +138,7 @@ class TaskState:
             child_env = os.environ.copy()
             child_env["PYTHONIOENCODING"] = "utf-8"
             child_env["PYTHONUTF8"] = "1"
+            child_env["PYTHONUNBUFFERED"] = "1"
             try:
                 process = subprocess.Popen(
                     command[1],
@@ -156,7 +199,7 @@ class SingleInstanceHTTPServer(ThreadingHTTPServer):
         super().server_bind()
 
 
-def save_browser_cookies(raw: Dict[str, Any]) -> int:
+def save_browser_cookies(raw: Dict[str, Any], user_agent: str = "") -> int:
     cookies = sanitize_cookies({str(key): str(value) for key, value in raw.items()})
     if not cookies:
         raise ValueError("没有收到抖音 Cookie")
@@ -167,6 +210,9 @@ def save_browser_cookies(raw: Dict[str, Any]) -> int:
         CONFIG.write_text((ROOT / "config.example.yml").read_text(encoding="utf-8"), encoding="utf-8")
     config_data = yaml.safe_load(CONFIG.read_text(encoding="utf-8")) or {}
     config_data["cookies"] = "auto"
+    normalized_user_agent = " ".join(str(user_agent or "").split())[:512]
+    if normalized_user_agent:
+        config_data["browser_user_agent"] = normalized_user_agent
     CONFIG.write_text(
         yaml.safe_dump(config_data, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
@@ -322,30 +368,9 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/status":
             self._send(200, {"ok": True, **TASK.snapshot()})
         elif self.path == "/api/following":
-            snapshot_file = STATE_DIR / "following.json"
-            if not snapshot_file.exists():
-                self._send(200, {"ok": True, "count": 0, "authors": []})
-            else:
-                payload = json.loads(snapshot_file.read_text(encoding="utf-8"))
-                if not following_snapshot_is_fresh(payload):
-                    self._send(
-                        200,
-                        {
-                            "ok": True,
-                            "count": 0,
-                            "authors": [],
-                            "stale": True,
-                        },
-                    )
-                    return
-                self._send(
-                    200,
-                    {
-                        "ok": True,
-                        "count": int(payload.get("count") or 0),
-                        "authors": payload.get("authors") or [],
-                    },
-                )
+            self._send(200, read_following_snapshot())
+        elif self.path == "/api/following-cached":
+            self._send(200, read_following_snapshot(include_stale=True))
         else:
             self._send(404, {"ok": False, "error": "not found"})
 
@@ -356,7 +381,10 @@ class Handler(BaseHTTPRequestHandler):
         try:
             body = self._body()
             if self.path == "/api/cookies":
-                count = save_browser_cookies(body.get("cookies") or {})
+                count = save_browser_cookies(
+                    body.get("cookies") or {},
+                    str(body.get("user_agent") or ""),
+                )
                 self._send(200, {"ok": True, "cookie_count": count})
             elif self.path == "/api/select-folder":
                 selected = select_native_folder(str(body.get("initial_dir") or ""))

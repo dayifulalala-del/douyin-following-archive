@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
   "name": "抖音关注珍藏（本机开源版）",
-  "version": "1.3.4",
+  "version": "1.3.6",
   "description": "同步并备份当前抖音账号关注作者的公开作品，无作者人数限制。",
   "permissions": ["cookies", "storage"],
   "host_permissions": [
     "https://*.douyin.com/*",
-    "http://127.0.0.1:8765/*"
+    "http://127.0.0.1:8766/*"
   ],
   "action": {
     "default_title": "抖音关注珍藏",

@@ -18,6 +18,7 @@
   let archiveChecks = {};
   let archiveMetaById = new Map();
   let timer = null;
+  let followingNotice = "";
   const savedDir = () => localStorage.getItem("dyArchiveDownloadDir") || "";
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -112,6 +113,31 @@
     });
   }
 
+  function followingErrorMessage(status) {
+    if (status.error) return status.error;
+    const lines = (status.logs || []).map((line) => String(line || ""));
+    const joined = lines.join("\n").toLowerCase();
+    if (joined.includes("empty 200 response") || joined.includes("anti-bot")) {
+      return "抖音暂时拦截了关注列表刷新，请稍后重试。";
+    }
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      if (lines[index].includes("RuntimeError:")) {
+        return lines[index].split("RuntimeError:", 2)[1].trim();
+      }
+    }
+    return "关注列表同步失败，请稍后重试。";
+  }
+
+  async function loadCachedFollowing() {
+    for (const path of ["/api/following-cached", "/api/following"]) {
+      try {
+        const result = await api(path);
+        if ((result.authors || []).length) return result;
+      } catch (_error) {}
+    }
+    return null;
+  }
+
   async function followingFlow() {
     progressScreen("正在打开您的关注列表…");
     try {
@@ -124,12 +150,24 @@
         if (status.status === "completed") {
           clearInterval(timer); timer = null;
           const result = await api("/api/following");
-          authors = result.authors;
+          authors = result.authors || [];
+          followingNotice = "";
           await loadArchiveAuthors();
           selectionScreen();
         } else if (status.status === "failed") {
           clearInterval(timer); timer = null;
-          alert(status.logs?.slice(-1)[0] || "关注列表同步失败");
+          const reason = followingErrorMessage(status);
+          try {
+            const cached = await loadCachedFollowing();
+            if (cached) {
+              authors = cached.authors;
+              followingNotice = `${reason} 已显示上次成功同步的 ${cached.count} 人，旧数据没有丢失。`;
+              await loadArchiveAuthors();
+              selectionScreen();
+              return;
+            }
+          } catch (_cacheError) {}
+          alert(reason);
           mainScreen();
         }
       }, 1200);
@@ -203,7 +241,8 @@
       </label>`;
     };
     const pendingSelected = groups.pending.filter((author) => selected.has(author.sec_uid)).length;
-    shell(`<div class="dy-limit">您可以下载 <strong>无限</strong> 位作者。</div>
+    shell(`${followingNotice ? `<div class="dy-warning">${esc(followingNotice)}</div>` : ""}
+      <div class="dy-limit">您可以下载 <strong>无限</strong> 位作者。</div>
       <details><summary>已在本地库，检查更新（${groups.library.length}）</summary>
         <div class="dy-authors">${groups.library.map(row).join("") || '<p class="dy-empty">暂无</p>'}</div>
       </details>

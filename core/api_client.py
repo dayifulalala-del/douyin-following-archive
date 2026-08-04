@@ -161,13 +161,23 @@ class DouyinAPIClient:
         "login_time",
     }
 
-    def __init__(self, cookies: Dict[str, str], proxy: Optional[str] = None):
+    def __init__(
+        self,
+        cookies: Dict[str, str],
+        proxy: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ):
         self.cookies = sanitize_cookies(cookies or {})
         self.proxy = str(proxy or "").strip()
         self._session: Optional[aiohttp.ClientSession] = None
         self._browser_post_aweme_items: Dict[str, Dict[str, Any]] = {}
         self._browser_post_stats: Dict[str, int] = {}
-        selected_ua = random.choice(_USER_AGENT_POOL)
+        normalized_user_agent = " ".join(str(user_agent or "").split())[:512]
+        selected_ua = normalized_user_agent or random.choice(_USER_AGENT_POOL)
+        version_match = re.search(r"(?:Chrome|Chromium)/(\d+(?:\.\d+){0,3})", selected_ua)
+        self._browser_version = version_match.group(1) if version_match else "139.0.0.0"
+        self._browser_platform = "MacIntel" if "Macintosh" in selected_ua else "Win32"
+        self._os_name = "Mac OS" if "Macintosh" in selected_ua else "Windows"
         self.headers = {
             "User-Agent": selected_ua,
             "Referer": "https://www.douyin.com/?recommend=1",
@@ -236,13 +246,13 @@ class DouyinAPIClient:
             "screen_width": "1536",
             "screen_height": "864",
             "browser_language": "zh-CN",
-            "browser_platform": "Win32",
+            "browser_platform": self._browser_platform,
             "browser_name": "Chrome",
-            "browser_version": "139.0.0.0",
+            "browser_version": self._browser_version,
             "browser_online": "true",
             "engine_name": "Blink",
-            "engine_version": "139.0.0.0",
-            "os_name": "Windows",
+            "engine_version": self._browser_version,
+            "os_name": self._os_name,
             "os_version": "10",
             "cpu_core_num": "16",
             "device_memory": "8",
@@ -615,7 +625,9 @@ class DouyinAPIClient:
         self,
         sec_uid: str,
         *,
+        user_id: Optional[str] = None,
         max_time: int = 0,
+        offset: int = 0,
         count: int = 20,
     ) -> Dict[str, Any]:
         """Fetch a single page of the logged-in account's following list.
@@ -630,21 +642,42 @@ class DouyinAPIClient:
         ``max_time``, ``status_code``, and ``raw`` (the full response).
         """
         params = await self._default_query()
+        common_params = {
+            "sec_user_id": sec_uid,
+            "count": count,
+            "gps_access": "0",
+            "address_book_access": "0",
+            "min_change": "0",
+            "min_time": "0",
+            "max_time": max_time,
+            "is_top": "1",
+        }
+        if user_id:
+            common_params["user_id"] = str(user_id)
         params.update(
             {
-                "user_id": sec_uid,
-                "sec_user_id": sec_uid,
-                "offset": 0,
-                "count": count,
+                "offset": offset,
                 "source_type": "1",
-                "gps_access": "0",
-                "address_book_access": "0",
-                "min_change": "0",
+                "with_fstatus": "1",
+                **common_params,
             }
         )
-        if max_time > 0:
-            params["max_time"] = max_time
-        raw = await self._request_json("/aweme/v1/web/user/following/list/", params)
+        request_headers = {"Referer": "https://www.douyin.com/follow"}
+        legacy_params = dict(params)
+        legacy_params["source_type"] = "4" if max_time <= 0 else "1"
+        raw = await self._request_json(
+            "/aweme/v1/web/user/following/list/",
+            legacy_params,
+            request_headers=request_headers,
+            max_retries=2,
+        )
+        if not raw:
+            raw = await self._request_json(
+                "/aweme/v1/web/user/follow/list/",
+                params,
+                request_headers=request_headers,
+                max_retries=2,
+            )
         normalized = self._normalize_paged_response(
             raw,
             item_keys=["followings", "follow_list", "user_list"],
@@ -652,6 +685,8 @@ class DouyinAPIClient:
         # Expose the time-based pagination fields for the sync loop.
         normalized["min_time"] = int(raw.get("min_time") or 0) if isinstance(raw, dict) else 0
         normalized["max_time_resp"] = int(raw.get("max_time") or 0) if isinstance(raw, dict) else 0
+        normalized["offset"] = int(raw.get("offset") or 0) if isinstance(raw, dict) else 0
+        normalized["total"] = int(raw.get("total") or 0) if isinstance(raw, dict) else 0
         return normalized
 
     async def _build_collect_page_params(self, max_cursor: int, count: int) -> Dict[str, Any]:

@@ -50,15 +50,23 @@ async def collect_following(
     api_client: Any,
     sec_uid: str,
     *,
+    user_id: str = "",
     max_pages: int = 500,
     delay_seconds: float = 0.55,
 ) -> List[Dict[str, Any]]:
     authors: Dict[str, Dict[str, Any]] = {}
     max_time = 0
+    offset = 0
     seen_cursors = set()
 
     for page_number in range(1, max_pages + 1):
-        page = await api_client.get_following_page(sec_uid, max_time=max_time, count=20)
+        page = await api_client.get_following_page(
+            sec_uid,
+            user_id=user_id or None,
+            max_time=max_time,
+            offset=offset,
+            count=20,
+        )
         items = page.get("items") or []
         for item in items:
             if not isinstance(item, dict):
@@ -67,15 +75,25 @@ async def collect_following(
             if author:
                 authors[author["sec_uid"]] = author
 
-        print(f"[同步] 第 {page_number} 页，本页 {len(items)} 人，累计 {len(authors)} 人")
+        print(
+            f"[同步] 第 {page_number} 页，本页 {len(items)} 人，累计 {len(authors)} 人",
+            flush=True,
+        )
         next_cursor = int(page.get("min_time") or 0)
+        next_offset = int(page.get("offset") or 0)
         has_more = bool(page.get("has_more"))
-        if not has_more or not next_cursor or next_cursor in seen_cursors:
+        if not has_more:
             break
-        seen_cursors.add(next_cursor)
+        cursor_key = (next_cursor, next_offset)
+        if (not next_cursor and not next_offset) or cursor_key in seen_cursors:
+            raise RuntimeError("关注列表分页中断，已保留上次成功同步的数据。")
+        seen_cursors.add(cursor_key)
         max_time = next_cursor
+        offset = next_offset
         if delay_seconds:
             await asyncio.sleep(delay_seconds)
+    else:
+        raise RuntimeError("关注列表页数超过安全上限，已保留上次成功同步的数据。")
 
     return list(authors.values())
 
@@ -127,6 +145,37 @@ def write_outputs(
     return generated
 
 
+def keep_previous_snapshot_available(state_dir: Path) -> bool:
+    """Keep a valid old snapshot readable by pre-1.3.5 bridge processes.
+
+    Older bridge processes hide snapshots whose ``synced_at`` is over five
+    minutes old.  When a refresh is blocked, update only the cache timestamp
+    while preserving the original successful sync time and all author data.
+    """
+    snapshot_file = state_dir / "following.json"
+    if not snapshot_file.exists():
+        return False
+    try:
+        payload = json.loads(snapshot_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return False
+    authors = payload.get("authors") or []
+    if not isinstance(authors, list) or not authors:
+        return False
+
+    now = datetime.now(timezone.utc).isoformat()
+    payload.setdefault("data_synced_at", payload.get("synced_at") or now)
+    payload["last_refresh_failed_at"] = now
+    payload["synced_at"] = now
+    temporary = snapshot_file.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    temporary.replace(snapshot_file)
+    return True
+
+
 async def sync(args: argparse.Namespace) -> int:
     config_path = args.config.resolve()
     config = ConfigLoader(str(config_path))
@@ -134,7 +183,12 @@ async def sync(args: argparse.Namespace) -> int:
     if not cookies or any(str(value).startswith("YOUR_") for value in cookies.values()):
         raise RuntimeError("尚未登录。请先运行“登录/更新登录”。")
 
-    async with DouyinAPIClient(cookies, proxy=config.get("proxy")) as api_client:
+    browser_user_agent = str(config.config.get("browser_user_agent") or "").strip()
+    async with DouyinAPIClient(
+        cookies,
+        proxy=config.get("proxy"),
+        user_agent=browser_user_agent or None,
+    ) as api_client:
         self_info = await api_client.get_self_info()
         if not self_info:
             raise RuntimeError("无法读取当前抖音账号，请重新登录后再试。")
@@ -144,11 +198,13 @@ async def sync(args: argparse.Namespace) -> int:
         authors = await collect_following(
             api_client,
             sec_uid,
+            user_id=str(self_info.get("uid") or ""),
             max_pages=args.max_pages,
             delay_seconds=args.delay,
         )
 
     if not authors:
+        keep_previous_snapshot_available(args.state_dir.resolve())
         raise RuntimeError("没有同步到关注作者；请检查登录状态或稍后重试。")
     generated = write_outputs(
         base_config_path=config_path,

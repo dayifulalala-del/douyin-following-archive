@@ -16,6 +16,84 @@ def test_default_query_uses_existing_ms_token():
     assert params["msToken"] == "token-1"
 
 
+def test_custom_user_agent_keeps_request_fingerprint_in_sync():
+    user_agent = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+    )
+    client = DouyinAPIClient(
+        {"msToken": "token-1"},
+        user_agent=user_agent,
+    )
+
+    params = asyncio.run(client._default_query())
+
+    assert client.headers["User-Agent"] == user_agent
+    assert params["browser_version"] == "150.0.0.0"
+    assert params["engine_version"] == "150.0.0.0"
+    assert params["browser_platform"] == "Win32"
+
+
+@pytest.mark.asyncio
+async def test_following_page_uses_real_ids_and_working_endpoint(monkeypatch):
+    client = DouyinAPIClient({"msToken": "token-1"})
+    calls = []
+
+    async def _fake_request_json(path, params, **kwargs):
+        calls.append((path, dict(params), kwargs))
+        return {
+            "status_code": 0,
+            "followings": [{"sec_uid": "author-1"}],
+            "has_more": 0,
+            "min_time": 0,
+        }
+
+    monkeypatch.setattr(client, "_request_json", _fake_request_json)
+
+    page = await client.get_following_page(
+        "self-sec",
+        user_id="123456",
+        max_time=0,
+        offset=0,
+        count=20,
+    )
+
+    path, params, kwargs = calls[0]
+    assert path == "/aweme/v1/web/user/following/list/"
+    assert params["user_id"] == "123456"
+    assert params["sec_user_id"] == "self-sec"
+    assert params["min_time"] == "0"
+    assert params["max_time"] == 0
+    assert params["offset"] == 0
+    assert params["is_top"] == "1"
+    assert params["source_type"] == "4"
+    assert kwargs["request_headers"]["Referer"] == "https://www.douyin.com/follow"
+    assert page["items"] == [{"sec_uid": "author-1"}]
+
+
+@pytest.mark.asyncio
+async def test_following_page_falls_back_to_alternate_endpoint(monkeypatch):
+    client = DouyinAPIClient({"msToken": "token-1"})
+    paths = []
+
+    async def _fake_request_json(path, params, **_kwargs):
+        paths.append((path, dict(params)))
+        if path.endswith("/following/list/"):
+            return {}
+        return {"followings": [{"sec_uid": "alternate"}], "has_more": 0}
+
+    monkeypatch.setattr(client, "_request_json", _fake_request_json)
+
+    page = await client.get_following_page("self-sec", user_id="123456")
+
+    assert [path for path, _params in paths] == [
+        "/aweme/v1/web/user/following/list/",
+        "/aweme/v1/web/user/follow/list/",
+    ]
+    assert paths[0][1]["source_type"] == "4"
+    assert page["items"] == [{"sec_uid": "alternate"}]
+
+
 def test_build_signed_path_fallbacks_to_xbogus_when_abogus_disabled():
     client = DouyinAPIClient({"msToken": "token-1"})
     client._abogus_enabled = False
